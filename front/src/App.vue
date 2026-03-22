@@ -75,6 +75,17 @@
               <v-btn
                 v-if="rows.length > 0"
                 size="small"
+                color="success"
+                @click="exportToExcel"
+                variant="tonal"
+                icon
+              >
+                <v-icon>mdi-download</v-icon>
+                <v-tooltip activator="parent">Export to Excel</v-tooltip>
+              </v-btn>
+              <v-btn
+                v-if="rows.length > 0"
+                size="small"
                 :color="showChart ? 'primary' : 'default'"
                 @click="showChart = !showChart"
                 variant="tonal"
@@ -188,6 +199,7 @@
 import { computed, ref, watch, nextTick } from "vue";
 import Papa from "papaparse";
 import Chart from 'chart.js/auto';
+import * as XLSX from 'xlsx';
 import { MicroPythonSerial } from "./services/micropythonSerial";
 import { PostureAdjustment } from "./services/PostureAdjustment";
 
@@ -574,6 +586,140 @@ function initChart() {
       }
     }
   });
+}
+
+// Watch for showChart changes and initialize chart
+watch(showChart, async (newVal) => {
+  if (newVal) {
+    await nextTick();
+    initChart();
+  }
+});
+
+// Watch for data changes and reinitialize chart if visible
+watch(rows, async () => {
+  if (showChart.value && rows.value.length > 0) {
+    await nextTick();
+    initChart();
+  }
+});
+
+function exportToExcel() {
+  if (rows.value.length === 0) {
+    toast("No data to export", "warning");
+    return;
+  }
+
+  try {
+    // Create workbook
+    const wb = XLSX.utils.book_new();
+    
+    // Prepare data - create sheet data array
+    const sheetData = [];
+    
+    // Add title row
+    sheetData.push(['RunMeter Acceleration Analysis - Converted Data']);
+    sheetData.push([]); // Empty row
+    
+    // Add metadata
+    const timestamp = new Date().toLocaleString();
+    sheetData.push(['Export Date/Time:', timestamp]);
+    sheetData.push(['Total Records:', rows.value.length]);
+    sheetData.push([]); // Empty row
+    
+    // Add headers
+    const headers = [
+      'Time',
+      'Milliseconds',
+      'A-Forward (g)',
+      'A-Vertical (g)',
+      'A-Side (g)',
+      'Acc-X (g)',
+      'Acc-Y (g)',
+      'Acc-Z (g)',
+      'Gyro-X (°/s)',
+      'Gyro-Y (°/s)',
+      'Gyro-Z (°/s)'
+    ];
+    sheetData.push(headers);
+    
+    // Add data rows
+    rows.value.forEach(row => {
+      sheetData.push([
+        row.time || '',
+        row.millis || '',
+        row.aForward !== undefined ? row.aForward : '',
+        row.aVertical !== undefined ? row.aVertical : '',
+        row.aSide !== undefined ? row.aSide : '',
+        row.accX || '',
+        row.accY || '',
+        row.accZ || '',
+        row.gyroX || '',
+        row.gyroY || '',
+        row.gyroZ || ''
+      ]);
+    });
+    
+    // Create worksheet from data
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    
+    // Set column widths
+    const colWidths = [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15];
+    ws['!cols'] = colWidths.map(width => ({ wch: width }));
+    
+    // Merge title cells
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 1 } },
+      { s: { r: 3, c: 0 }, e: { r: 3, c: 1 } }
+    ];
+    
+    // Format title cell
+    ws['A1'] = {
+      v: 'RunMeter Acceleration Analysis - Converted Data',
+      s: {
+        font: { bold: true, size: 14 },
+        alignment: { horizontal: 'center', vertical: 'center' }
+      }
+    };
+    
+    // Format metadata and header rows
+    ['A3', 'A4', 'A6'].forEach(cell => {
+      if (ws[cell]) {
+        ws[cell].s = { font: { bold: true } };
+      }
+    });
+    
+    // Format header row
+    headers.forEach((_, idx) => {
+      const cellRef = XLSX.utils.encode_col(idx) + '6';
+      if (ws[cellRef]) {
+        ws[cellRef].s = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: '4472C4' } },
+          alignment: { horizontal: 'center', vertical: 'center' }
+        };
+      }
+    });
+    
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Acceleration Data');
+    
+    // Generate filename
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+    const filename = `RunMeter_Data_${dateStr}_${timeStr}.xlsx`;
+    
+    // Write file
+    XLSX.writeFile(wb, filename);
+    
+    toast(`Excel file exported successfully (${rows.value.length} records)`, 'success');
+    statusText.value = `Exported ${rows.value.length} records to ${filename}`;
+  } catch (err) {
+    console.error('Export error:', err);
+    toast(`Export failed: ${err.message}`, 'error');
+  }
 }
 
 // Watch for showChart changes and initialize chart
