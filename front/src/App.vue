@@ -70,18 +70,36 @@
 
         <v-card class="mt-6 pa-4 fade-up" rounded="xl" elevation="2">
           <div class="d-flex justify-space-between align-center mb-3">
-            <h2 class="text-h6 mb-0">CSV Data</h2>
-            <v-select
-              v-model="itemsPerPage"
-              :items="[10, 20, 50, 100]"
-              density="compact"
-              label="Rows per page"
-              style="max-width: 130px"
-              hide-details
-            />
+            <h2 class="text-h6 mb-0">{{ showChart ? 'Acceleration Chart' : 'CSV Data' }}</h2>
+            <div class="d-flex gap-2 align-center">
+              <v-btn
+                v-if="rows.length > 0"
+                size="small"
+                :color="showChart ? 'primary' : 'default'"
+                @click="showChart = !showChart"
+                variant="tonal"
+              >
+                {{ showChart ? 'Show Table' : 'Show Chart' }}
+              </v-btn>
+              <v-select
+                v-if="!showChart"
+                v-model="itemsPerPage"
+                :items="[10, 20, 50, 100]"
+                density="compact"
+                label="Rows per page"
+                style="max-width: 130px"
+                hide-details
+              />
+            </div>
           </div>
 
-          <v-table density="comfortable" fixed-header height="520">
+          <!-- Chart View -->
+          <div v-if="showChart" style="height: 520px; position: relative;">
+            <canvas ref="chartCanvas"></canvas>
+          </div>
+
+          <!-- Table View -->
+          <v-table v-else density="comfortable" fixed-header height="520">
             <thead>
               <tr>
                 <th>Time</th>
@@ -119,7 +137,7 @@
             </tbody>
           </v-table>
 
-          <div class="d-flex justify-end pt-4">
+          <div v-if="!showChart" class="d-flex justify-end pt-4">
             <v-pagination v-model="currentPage" :length="pageCount" :total-visible="7" />
           </div>
         </v-card>
@@ -167,8 +185,9 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
 import Papa from "papaparse";
+import Chart from 'chart.js/auto';
 import { MicroPythonSerial } from "./services/micropythonSerial";
 import { PostureAdjustment } from "./services/PostureAdjustment";
 
@@ -189,6 +208,9 @@ const statusText = ref("Waiting to connect to the device");
 const itemsPerPage = ref(20);
 const currentPage = ref(1);
 const fileInput = ref(null);
+const chartCanvas = ref(null);
+const showChart = ref(false);
+let chartInstance = null;
 
 const snackbar = ref({ show: false, text: "", color: "primary" });
 
@@ -438,4 +460,135 @@ function onLocalFileSelected(event) {
     uploading.value = false;
   }
 }
+
+function initChart() {
+  if (!chartCanvas.value || rows.value.length === 0) {
+    return;
+  }
+
+  // Destroy existing chart if it exists
+  if (chartInstance) {
+    chartInstance.destroy();
+  }
+
+  // Prepare chart data
+  const timeLabels = rows.value.map(row => {
+    const timestamp = `${row.time}-${row.millis}`;
+    return timestamp;
+  });
+
+  const aForwardData = rows.value.map(row => row.aForward ?? 0);
+  const aVerticalData = rows.value.map(row => row.aVertical ?? 0);
+  const aSideData = rows.value.map(row => row.aSide ?? 0);
+
+  const ctx = chartCanvas.value.getContext('2d');
+  
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: timeLabels,
+      datasets: [
+        {
+          label: 'A-Forward',
+          data: aForwardData,
+          borderColor: '#FF6B6B',
+          backgroundColor: 'rgba(255, 107, 107, 0.1)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.3
+        },
+        {
+          label: 'A-Vertical',
+          data: aVerticalData,
+          borderColor: '#4ECDC4',
+          backgroundColor: 'rgba(78, 205, 196, 0.1)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.3
+        },
+        {
+          label: 'A-Side',
+          data: aSideData,
+          borderColor: '#FFD93D',
+          backgroundColor: 'rgba(255, 217, 61, 0.1)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: {
+            usePointStyle: true,
+            padding: 15,
+            font: {
+              size: 12,
+              weight: 'bold'
+            }
+          }
+        },
+        title: {
+          display: true,
+          text: 'Acceleration Data Over Time (Millisecond Precision)',
+          font: {
+            size: 14,
+            weight: 'bold'
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: 'Time (seconds-milliseconds)',
+            font: {
+              weight: 'bold'
+            }
+          },
+          ticks: {
+            maxTicksLimit: 20
+          }
+        },
+        y: {
+          title: {
+            display: true,
+            text: 'Acceleration (g)',
+            font: {
+              weight: 'bold'
+            }
+          },
+          beginAtZero: true
+        }
+      }
+    }
+  });
+}
+
+// Watch for showChart changes and initialize chart
+watch(showChart, async (newVal) => {
+  if (newVal) {
+    await nextTick();
+    initChart();
+  }
+});
+
+// Watch for data changes and reinitialize chart if visible
+watch(rows, async () => {
+  if (showChart.value && rows.value.length > 0) {
+    await nextTick();
+    initChart();
+  }
+});
 </script>
