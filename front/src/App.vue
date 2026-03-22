@@ -62,7 +62,19 @@
                 Convert
               </v-btn>
             </v-col>
-            <v-col cols="12" md="5" class="d-flex align-center">
+            <v-col cols="12" md="2">
+              <v-btn
+                block
+                size="large"
+                color="success"
+                @click="exportToExcel"
+                :disabled="rows.length === 0"
+                icon
+              >
+                <v-icon>mdi-download</v-icon>
+              </v-btn>
+            </v-col>
+            <v-col cols="12" md="3" class="d-flex align-center">
               <span class="text-body-2">{{ statusText }}</span>
             </v-col>
           </v-row>
@@ -72,17 +84,6 @@
           <div class="d-flex justify-space-between align-center mb-3">
             <h2 class="text-h6 mb-0">{{ showChart ? 'Acceleration Chart' : 'CSV Data' }}</h2>
             <div class="d-flex gap-2 align-center">
-              <v-btn
-                v-if="rows.length > 0"
-                size="small"
-                color="success"
-                @click="exportToExcel"
-                variant="tonal"
-                icon
-              >
-                <v-icon>mdi-download</v-icon>
-                <v-tooltip activator="parent">Export to Excel</v-tooltip>
-              </v-btn>
               <v-btn
                 v-if="rows.length > 0"
                 size="small"
