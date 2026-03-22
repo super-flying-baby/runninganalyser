@@ -151,8 +151,7 @@ export class PostureAdjustment {
    * Filter serves as gravity reference by attenuating dynamic accelerations
    * 
    * @param {Vector3} accel - Current acceleration vector
-  }
-
+   */
   updateGravityEstimate(accel) {
     // Low-pass filtering implementation:
     // filtered = α * current + (1-α) * previous
