@@ -4,7 +4,7 @@
       <v-container class="rm-page py-8">
         <v-row class="fade-up" align="center" justify="space-between">
           <v-col cols="12" md="8">
-            <h1 class="rm-title text-h3 font-weight-bold mb-2">RUNMETER ANALYZER</h1>
+            <h1 class="rm-title text-h3 font-weight-bold mb-2">Motion Lab</h1>
             <p class="text-body-1 mb-0">
               Connect to M5StickC Plus2 over USB, read CSV files from the device,
               and review motion data directly in the browser.
