@@ -69,9 +69,9 @@
                 color="success"
                 @click="exportToExcel"
                 :disabled="rows.length === 0"
-                icon
               >
-                <v-icon>mdi-download</v-icon>
+                <v-icon left>mdi-download</v-icon>
+                Export
               </v-btn>
             </v-col>
             <v-col cols="12" md="3" class="d-flex align-center">
