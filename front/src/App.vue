@@ -106,8 +106,17 @@
           </div>
 
           <!-- Chart View -->
-          <div v-if="showChart" style="height: 520px; position: relative;">
-            <canvas ref="chartCanvas"></canvas>
+          <div v-if="showChart">
+            <div style="height: 300px; position: relative;">
+              <canvas ref="chartCanvas"></canvas>
+            </div>
+            <div class="mt-4" style="height: 280px; position: relative;">
+              <div class="d-flex justify-space-between align-center mb-2">
+                <h3 class="text-subtitle-1 mb-0">Velocity Chart</h3>
+                <span class="text-caption text-medium-emphasis">Calculated from a-forward / a-vertical / a-side</span>
+              </div>
+              <canvas ref="chartVelocityCanvas"></canvas>
+            </div>
           </div>
 
           <!-- Table View -->
@@ -119,6 +128,9 @@
                 <th>A-Forward</th>
                 <th>A-Vertical</th>
                 <th>A-Side</th>
+                <th>V-Forward (m/s)</th>
+                <th>V-Vertical (m/s)</th>
+                <th>V-Side (m/s)</th>
                 <th>Acc-X</th>
                 <th>Acc-Y</th>
                 <th>Acc-Z</th>
@@ -134,6 +146,9 @@
                 <td>{{ row.aForward ?? "-" }}</td>
                 <td>{{ row.aVertical ?? "-" }}</td>
                 <td>{{ row.aSide ?? "-" }}</td>
+                <td>{{ row.vForward !== undefined ? row.vForward.toFixed(4) : "-" }}</td>
+                <td>{{ row.vVertical !== undefined ? row.vVertical.toFixed(4) : "-" }}</td>
+                <td>{{ row.vSide !== undefined ? row.vSide.toFixed(4) : "-" }}</td>
                 <td>{{ row.accX }}</td>
                 <td>{{ row.accY }}</td>
                 <td>{{ row.accZ }}</td>
@@ -142,7 +157,7 @@
                 <td>{{ row.gyroZ }}</td>
               </tr>
               <tr v-if="pagedRows.length === 0">
-                <td colspan="11" class="text-center text-medium-emphasis py-6">
+                <td colspan="14" class="text-center text-medium-emphasis py-6">
                   No data loaded yet. Click Sync to connect and load a CSV file.
                 </td>
               </tr>
@@ -203,6 +218,7 @@ import Chart from 'chart.js/auto';
 import * as XLSX from 'xlsx';
 import { MicroPythonSerial } from "./services/micropythonSerial";
 import { PostureAdjustment } from "./services/PostureAdjustment";
+import { VelocityIntegration } from "./services/velocity";
 
 const serial = new MicroPythonSerial();
 const postureAdjustment = new PostureAdjustment();
@@ -222,8 +238,10 @@ const itemsPerPage = ref(20);
 const currentPage = ref(1);
 const fileInput = ref(null);
 const chartCanvas = ref(null);
+const chartVelocityCanvas = ref(null);
 const showChart = ref(false);
 let chartInstance = null;
+let velocityChartInstance = null;
 
 const snackbar = ref({ show: false, text: "", color: "primary" });
 
@@ -333,9 +351,12 @@ function mapRow(record) {
     accX: safe(2),
     accY: safe(3),
     accZ: safe(4),
-    gyroX: safe(5),
-    gyroY: safe(6),
-    gyroZ: safe(7)
+    gravityX: safe(5),
+    gravityY: safe(6),
+    gravityZ: safe(7),
+    gyroX: safe(8),
+    gyroY: safe(9),
+    gyroZ: safe(10)
   };
 }
 
@@ -396,15 +417,21 @@ function onConvert() {
   try {
     statusText.value = `Converting ${rows.value.length} records with posture adjustment...`;
     rows.value = postureAdjustment.convertRows(rows.value);
+    rows.value = VelocityIntegration.computeVelocities(rows.value, {
+      thresholdG: 0.03,
+      zeroVelocityThreshold: 0.15,
+      stationarityWindowMs: 200,
+      maxVelocityReset: 0.25
+    });
     currentPage.value = 1;
     
     const scaleFactor = postureAdjustment.getGravityScaleFactor();
-    let message = `Converted ${rows.value.length} record(s) successfully`;
+    let message = `Converted ${rows.value.length} record(s) and calculated velocity.`;
     if (scaleFactor && scaleFactor !== 1) {
       message += ` (Gravity scale factor: ${scaleFactor.toFixed(4)})`;
     }
     statusText.value = message;
-    toast("Acceleration conversion completed", "success");
+    toast("Acceleration and velocity processing completed", "success");
   } catch (err) {
     statusText.value = err.message || "Conversion failed";
     toast(statusText.value, "error");
@@ -474,29 +501,47 @@ function onLocalFileSelected(event) {
   }
 }
 
+function destroyCharts() {
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
+  if (velocityChartInstance) {
+    velocityChartInstance.destroy();
+    velocityChartInstance = null;
+  }
+}
+
 function initChart() {
-  if (!chartCanvas.value || rows.value.length === 0) {
+  if (!rows.value.length) {
+    destroyCharts();
     return;
   }
 
-  // Destroy existing chart if it exists
-  if (chartInstance) {
-    chartInstance.destroy();
+  if (!chartCanvas.value || !chartVelocityCanvas.value) {
+    return;
   }
 
-  // Prepare chart data
-  const timeLabels = rows.value.map(row => {
-    const timestamp = `${row.time}-${row.millis}`;
-    return timestamp;
-  });
+  destroyCharts();
 
+  const timeLabels = rows.value.map(row => `${row.time}-${row.millis}`);
   const aForwardData = rows.value.map(row => row.aForward ?? 0);
   const aVerticalData = rows.value.map(row => row.aVertical ?? 0);
   const aSideData = rows.value.map(row => row.aSide ?? 0);
 
-  const ctx = chartCanvas.value.getContext('2d');
-  
-  chartInstance = new Chart(ctx, {
+  const velocityRows = VelocityIntegration.computeVelocities(rows.value, {
+    thresholdG: 0.03,
+    stationarityWindowMs: 200,
+    zeroVelocityThreshold: 0.15,
+    zeroVelocityMaxReset: 0.25
+  });
+
+  const vForwardData = velocityRows.map(row => row.vForward ?? 0);
+  const vVerticalData = velocityRows.map(row => row.vVertical ?? 0);
+  const vSideData = velocityRows.map(row => row.vSide ?? 0);
+
+  const accelCtx = chartCanvas.value.getContext('2d');
+  chartInstance = new Chart(accelCtx, {
     type: 'line',
     data: {
       labels: timeLabels,
@@ -587,6 +632,99 @@ function initChart() {
       }
     }
   });
+
+  const velocityCtx = chartVelocityCanvas.value.getContext('2d');
+  velocityChartInstance = new Chart(velocityCtx, {
+    type: 'line',
+    data: {
+      labels: timeLabels,
+      datasets: [
+        {
+          label: 'V-Forward',
+          data: vForwardData,
+          borderColor: '#7C4DFF',
+          backgroundColor: 'rgba(124, 77, 255, 0.1)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.3
+        },
+        {
+          label: 'V-Vertical',
+          data: vVerticalData,
+          borderColor: '#00B8D4',
+          backgroundColor: 'rgba(0, 184, 212, 0.1)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.3
+        },
+        {
+          label: 'V-Side',
+          data: vSideData,
+          borderColor: '#FF8A65',
+          backgroundColor: 'rgba(255, 138, 101, 0.1)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          tension: 0.3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: {
+            usePointStyle: true,
+            padding: 15,
+            font: {
+              size: 12,
+              weight: 'bold'
+            }
+          }
+        },
+        title: {
+          display: true,
+          text: 'Velocity Data Over Time (m/s)',
+          font: {
+            size: 14,
+            weight: 'bold'
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: 'Time (seconds-milliseconds)',
+            font: {
+              weight: 'bold'
+            }
+          },
+          ticks: {
+            maxTicksLimit: 20
+          }
+        },
+        y: {
+          title: {
+            display: true,
+            text: 'Velocity (m/s)',
+            font: {
+              weight: 'bold'
+            }
+          },
+          beginAtZero: false
+        }
+      }
+    }
+  });
 }
 
 // Watch for showChart changes and initialize chart
@@ -594,6 +732,8 @@ watch(showChart, async (newVal) => {
   if (newVal) {
     await nextTick();
     initChart();
+  } else {
+    destroyCharts();
   }
 });
 
@@ -635,6 +775,9 @@ function exportToExcel() {
       'A-Forward (g)',
       'A-Vertical (g)',
       'A-Side (g)',
+      'V-Forward (m/s)',
+      'V-Vertical (m/s)',
+      'V-Side (m/s)',
       'Acc-X (g)',
       'Acc-Y (g)',
       'Acc-Z (g)',
@@ -652,6 +795,9 @@ function exportToExcel() {
         row.aForward !== undefined ? row.aForward : '',
         row.aVertical !== undefined ? row.aVertical : '',
         row.aSide !== undefined ? row.aSide : '',
+        row.vForward !== undefined ? row.vForward : '',
+        row.vVertical !== undefined ? row.vVertical : '',
+        row.vSide !== undefined ? row.vSide : '',
         row.accX || '',
         row.accY || '',
         row.accZ || '',
@@ -665,12 +811,12 @@ function exportToExcel() {
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
     
     // Set column widths
-    const colWidths = [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15];
+    const colWidths = [15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15];
     ws['!cols'] = colWidths.map(width => ({ wch: width }));
     
     // Merge title cells
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } },
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 13 } },
       { s: { r: 2, c: 0 }, e: { r: 2, c: 1 } },
       { s: { r: 3, c: 0 }, e: { r: 3, c: 1 } }
     ];
